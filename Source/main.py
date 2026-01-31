@@ -13,119 +13,173 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import json
+import os
 import datetime
 from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.prompt import Prompt
 
 console = Console()
+DATA_FILE = "notes.json"
 
-ASCII_ART = r"""
-[yellow]
-    _    _                           _                  __           
-  F L  J J     ____     _ ___    ___FJ     ____        LJ   _ ___   
- J J .. L L   F __ J   J '__ ", F __  L   F ___J           J '__ J  
- | |/  \| |  | |--| |  | |__|-J| |--| |  | '----_      FJ  | |__| | 
- F   /\   J  F L__J J  F L  `-'F L__J J  )-____  L    J  L F L  J J 
-J___//\\___LJ\______/FJ__L    J\____,__LJ\______/F    J__LJ__L  J__L
-|___/  \___|_J______F |__L     J____,__F J______F     |__||__L  J__|
-  FJ       LJ   _ ___      ____      ____                           
- J |           J '__ J    F __ J    F ___J                          
- | |       FJ  | |__| |  | _____J  | '----_                         
- F L_____ J  L F L  J J  F L___--. )-____  L                        
-J________LJ__LJ__L  J__LJ\______/FJ\______/F                        
-|________||__||__L  J__| J______F  J______F                         
-[/yellow]
-"""
 
-console.print(ASCII_ART)
+# -------------------- MODELS --------------------
+
 class Note:
-    def __init__(self, title, text, category):
+    def __init__(self, title, text, created_at=None):
         self.title = title
         self.text = text
-        self.category = category
-        self.creation_date = datetime.datetime.now()
+        self.created_at = created_at or datetime.datetime.now()
 
-    def __str__(self):
-        return f"Title: {self.title}\nСategory: {self.category}\nDate of creation: {self.creation_date}\nText:\n{self.text}\n"
+    def to_dict(self):
+        return {
+            "title": self.title,
+            "text": self.text,
+            "created_at": self.created_at.isoformat()
+        }
 
+    @staticmethod
+    def from_dict(data):
+        return Note(
+            data["title"],
+            data["text"],
+            datetime.datetime.fromisoformat(data["created_at"])
+        )
+
+
+class Category:
+    def __init__(self, name):
+        self.name = name
+        self.notes = []
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "notes": [n.to_dict() for n in self.notes]
+        }
+
+    @staticmethod
+    def from_dict(data):
+        c = Category(data["name"])
+        c.notes = [Note.from_dict(n) for n in data["notes"]]
+        return c
 
 
 class Notebook:
     def __init__(self):
-        self.notes = []
+        self.categories = {}
+        self.load()
 
-    def add_note(self, title, text, category):
-        new_note = Note(title, text, category)
-        self.notes.append(new_note)
+    def load(self):
+        if not os.path.exists(DATA_FILE):
+            return
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            for name, cat in data.items():
+                self.categories[name] = Category.from_dict(cat)
 
-    def view_notes(self):
-        if not self.notes:
-            print("No notes.")
-        else:
-            for note in self.notes:
-                print(note)
-                print("-" * 40)
+    def save(self):
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                {k: v.to_dict() for k, v in self.categories.items()},
+                f,
+                indent=4,
+                ensure_ascii=False
+            )
 
-    def edit_note(self, title, new_text):
-        for note in self.notes:
-            if note.title == title:
-                note.text = new_text
-                print("Note edited.")
-                return
-        print("Note with this title not found.")
+    # ---------- NOTES API ----------
 
-    def delete_note(self, title):
-        for note in self.notes:
-            if note.title == title:
-                self.notes.remove(note)
-                print("Note deleted.")
-                return
-        print("Note with this title not found.")
+    def add_note(self, category, title, text):
+        if category not in self.categories:
+            self.categories[category] = Category(category)
+        self.categories[category].notes.append(Note(title, text))
+        self.save()
+
+    def delete_note(self, category, title):
+        if category not in self.categories:
+            return False
+
+        cat = self.categories[category]
+        cat.notes = [n for n in cat.notes if n.title != title]
+
+        if not cat.notes:
+            del self.categories[category]
+
+        self.save()
+        return True
 
 
+# -------------------- UI --------------------
 
-def display_menu():
-    print("1. Add a new note")
-    print("2. View all notes")
-    print("3. Edit a note")
-    print("4. Delete a note")
-    print("5. Exit")
+def header():
+    console.print(Panel.fit(
+        "[bold cyan]Notebook[/bold cyan]\n[dim]Notes with categories[/dim]",
+        border_style="cyan"
+    ))
 
+
+def view_notes(nb: Notebook):
+    if not nb.categories:
+        console.print("[dim]No notes yet[/dim]")
+        return
+
+    for cat in nb.categories.values():
+        table = Table(title=f"[bold yellow]{cat.name}[/bold yellow]", show_lines=True)
+        table.add_column("Title", style="bold")
+        table.add_column("Created", style="dim")
+        table.add_column("Text")
+
+        for note in cat.notes:
+            table.add_row(
+                note.title,
+                note.created_at.strftime("%Y-%m-%d %H:%M"),
+                note.text
+            )
+
+        console.print(table)
+
+
+def menu():
+    console.print("""
+[bold]1[/bold] Add note
+[bold]2[/bold] View notes
+[bold]3[/bold] Delete note
+[bold]4[/bold] Exit
+""")
 
 
 def main():
-    notebook = Notebook()
+    nb = Notebook()
+    header()
 
     while True:
-        display_menu()
-        choice = input("Оберіть опцію: ")
+        menu()
+        choice = Prompt.ask("Choose", choices=["1", "2", "3", "4"])
 
         if choice == "1":
-            title = input("Введіть заголовок нотатки: ")
-            text = input("Введіть текст нотатки: ")
-            category = input("Введіть категорію нотатки: ")
-            notebook.add_note(title, text, category)
-            print("Нотатку додано.\n")
+            nb.add_note(
+                Prompt.ask("Category"),
+                Prompt.ask("Title"),
+                Prompt.ask("Text")
+            )
 
         elif choice == "2":
-            notebook.view_notes()
+            view_notes(nb)
 
         elif choice == "3":
-            title = input("Введіть заголовок нотатки для редагування: ")
-            new_text = input("Введіть новий текст нотатки: ")
-            notebook.edit_note(title, new_text)
+            ok = nb.delete_note(
+                Prompt.ask("Category"),
+                Prompt.ask("Title")
+            )
+            if not ok:
+                console.print("[red]Note not found[/red]")
 
         elif choice == "4":
-            title = input("Введіть заголовок нотатки для видалення: ")
-            notebook.delete_note(title)
-
-        elif choice == "5":
-            print("Вихід з програми.")
+            console.print("[green]Bye 👋[/green]")
             break
-
-        else:
-            print("Невірний вибір, спробуйте ще раз.\n")
 
 
 if __name__ == "__main__":
     main()
-
